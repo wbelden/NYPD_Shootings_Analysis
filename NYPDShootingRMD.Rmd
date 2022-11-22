@@ -1,0 +1,190 @@
+---
+title: "NYPD Shooting Incidents RMD"
+output:
+  html_document: default
+  pdf_document: default
+date: "2022-11-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##NYPD Shooting Incidents Data
+
+###Libraries
+I being by importing the tidyverse & lubridate libraries.
+
+```{r Libraries}
+library(tidyverse)
+library(lubridate)
+library(ggrepel)
+```
+
+###Load the Data
+After importing my libraries, I load the data from a csv located at the following url: <https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD>
+
+```{r Load_Data}
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+NYPDShooting <- read.csv(url)
+
+summary(NYPDShooting)
+```
+
+###Cleaning the Data
+
+Next, we want to see a cleaned up version of the data by removing some columns that I won't be using, formatting my date column, and adding a few more date options.
+
+```{r Tidy_Data}
+tidyNYPDShooting <- NYPDShooting %>%
+  mutate(date = mdy(OCCUR_DATE), time = hms(OCCUR_TIME), borough = BORO, wasMurder = STATISTICAL_MURDER_FLAG, perpAgeGroup = PERP_AGE_GROUP, perpSex = PERP_SEX, perpRace = PERP_RACE, vicAgeGroup = VIC_AGE_GROUP, vicSex = VIC_SEX, vicRace = VIC_RACE) %>%
+  select(date, time, borough, wasMurder, perpAgeGroup, perpSex, perpRace, vicAgeGroup, vicSex, vicRace)
+
+summary(tidyNYPDShooting)
+```
+
+
+###Group by Year & Borough
+
+Here I am grouping the incidents by the borough where the incident occured over each year.
+
+```{r Group_By_Year_and_Borough}
+shootingsByYearBorough <- tidyNYPDShooting %>% 
+    group_by(borough, year = year(date)) %>%
+    tally() %>%
+    mutate(numIncidents = n) %>%
+    select(borough, year, numIncidents)
+
+summary(shootingsByYearBorough)
+```
+
+###Visualize the Number of Incidents by Year & Borough
+Next, I want to visualize the shootings that occurred in each borough over each year. 
+This shows a gradual decline from 2006 to 2019 and a significant increase after 2019. 
+You can also see that Bronx & Brooklyn boroughs have more incidents each year than the other boroughs. 
+
+```{r Visualize_Year_and_Borough}
+ggplot(data = shootingsByYearBorough, aes(x = year, y = numIncidents, group = borough)) +
+    geom_line(aes(color = borough)) +
+    geom_point(aes(color = borough))
+```
+
+###Group by Month and Borough
+
+I wanted to see if there is a trend in the number of incidents based on seasonality by grouping the data by month and borough.
+
+```{r Group_by_Month_and_Borough}
+shootingsByMonthBorough <- tidyNYPDShooting %>% 
+    group_by(borough, month = paste(format(date, '%m'), month.abb[month(date)], sep = " - ")) %>%
+    tally() %>%
+    mutate(numIncidents = n) %>%
+    select(borough, month, numIncidents)
+```
+
+###Visualize the Number of Incidents by Month and Borough
+
+Again, I visualize the data in a line graph.
+You can begin to see a trend in the seasonality of shootings now.
+There seem to be more shooting incidents in the warmer months, and this tends to go down in the colder months.
+
+```{r Visualize_Month_and_Borough}
+ggplot(data = shootingsByMonthBorough, aes(x = month, y = numIncidents, group = borough)) +
+    geom_line(aes(color = borough)) +
+    geom_point(aes(color = borough))
+```
+
+###Group by Hour & Borough
+
+Here, I am further grouping the incidents by hour of day & borough in order to see any trends in incidents for different periods in the day.
+
+```{r Group_by_Hour_and_Borough}
+shootingsByHourBorough <- tidyNYPDShooting %>% 
+    group_by(borough, hour = hour(time)) %>%
+    tally() %>%
+    mutate(numIncidents = n) %>%
+    select(borough, hour, numIncidents)
+```
+
+###Visualize the Number of Incidents by Hour and Borough
+
+Again, I am visualizing the hour data using a line graph.
+As you can see, there seem to be more shooting incidents in the evening, regardless of the borough.
+
+```{r Visualize_Hour_and_Borough}
+ggplot(shootingsByHourBorough, aes(x = hour, y = numIncidents, group = borough)) +
+  geom_line(aes(color = borough)) +
+  geom_point(aes(color = borough))
+```
+
+
+###Analyze the incidents by year, month, & hour for outliers.
+
+I create a new dataset by grouping on year, month, & hour. 
+Then, I look at the summary of incidents.
+
+I can see that the minimum number of incidents is 1 and that is only 1 off from the 1st Quartile range. This tells me there are no significant outliers at the lower bound.
+
+However, the max of 42 shooting incidents is 36 incidents more than the 3rd quartile at 8 incidents. This tells me I have some potential outliers to look at in the upper bound.
+
+After calculating the Q3 + 1.5IQR (3 + 1.5*(3-1)), I get an upper fence of 6 incidents.
+I use this upper fence as my filter on number of incidents to get my outliers.
+
+I get a count of year month hour occurrences for each number of incidents between 6 and the max 26. 
+I can see there is a slow decline in the occurrence of incidents greater than 15, so I further refine the outlier filter to greater than 15 incidents in for year, month, & hour. 
+
+Plotting this with ggrepel allows me to see the year month and hour that have the most occurrences. In May of 2021, there were 42 total shooting incidents at 11 pm for the entire month.
+
+```{r Analyze}
+shootingsByBYMH <- tidyNYPDShooting %>% 
+    group_by(boroughMonthYearHour = paste(borough, ": ", paste(format(date, '%m'), month.abb[month(date)], sep = " - "), ", ", year(date), " ", hour(time),":00", sep = "")) %>%
+    tally() %>%
+    mutate(numIncidents = n) %>%
+    select(boroughMonthYearHour, numIncidents)
+
+summary(shootingsByBYMH)
+```
+
+```{r Analyze_Upper_Fence_Outliers}
+sbymhOutliers <- shootingsByBYMH %>% 
+    filter(numIncidents > 6)
+
+ggplot(sbymhOutliers, aes(x = "Outliers", y = numIncidents, label = boroughMonthYearHour)) +
+    geom_point() +
+    geom_text_repel(box.padding = 0.5, max.overlaps = Inf)
+```
+
+
+```{r Analyze_BYMH_Count_of_Outliers}
+countOutliers <- sbymhOutliers %>% group_by(numIncidents) %>% tally() %>% mutate(numOutliers = n) %>%
+    select(numIncidents, numOutliers) %>% ungroup()
+
+sbymhOutliers <- sbymhOutliers %>%
+    filter(numIncidents > 15)
+
+ggplot(sbymhOutliers, aes(x = "Outliers", y = numIncidents, label = boroughMonthYearHour)) +
+    geom_point() +
+    geom_text_repel(box.padding = 0.5, max.overlaps = Inf)
+```
+
+
+
+```{r Analyze_Brooklyn_July_2020_11PM}
+bymh26 <- NYPDShooting %>% 
+  mutate(date = mdy(OCCUR_DATE), time = hms(OCCUR_TIME)) %>% 
+  filter(BORO == "BROOKLYN" & month(date) == 7 & year(date) == 2020 & hour(time) == 21) %>% 
+  arrange(date,time)
+
+bymh26
+```
+
+```{r Analyze_Brooklyn_July_7_2020_11PM}
+July7Shooting <- NYPDShooting %>% 
+  mutate(date = mdy(OCCUR_DATE), time = hms(OCCUR_TIME)) %>% 
+  filter(BORO == "BROOKLYN" & date == "2020-07-07" & hour(time) == 21) %>% 
+  arrange(desc(date),desc(time))
+
+July7Shooting
+```
+
+
